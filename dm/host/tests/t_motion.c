@@ -97,6 +97,29 @@ int main(void) {
     // turning the phone (landscape right) about its own long side, which is the picture's x axis: rotation about phone -y becomes rotation about Switch +x
     float rl[3] = {0, -1, 0}; motion_phone_to_switch(3, rl, o); CHECK(near(o[0], 1, 1e-6f) && near(o[1], 0, 1e-6f), "rotation axes follow the picture");
 
+    // the orientation from gravity: on a phone whose screen follows its body it is always the screen's (nothing replaced); where the body is held 90 degrees from what the screen says, it takes over
+    float gdown3[3] = {-1, 0, 0}, gdown4[3] = {1, 0, 0}, gport[3] = {0, -1, 0}, gtilt[3] = {-0.5f, 0, -0.85f}, gflat2[3] = {0, 0, -1};
+    float dn;
+    CHECK(motion_orient_from_gravity(gdown3, &dn) == 3 && near(dn, -1, 1e-6f), "gravity down the picture of landscape right");
+    CHECK(motion_orient_from_gravity(gdown4, &dn) == 4 && near(dn, -1, 1e-6f), "gravity down the picture of landscape left");
+    CHECK(motion_orient_from_gravity(gport, &dn) == 1, "portrait upright");
+    motion_orient t = {0, 0, 0}; int ro = 0;
+    for (int i = 0; i < 200; i++) ro = motion_orient_update(&t, 3, gdown3, 30);
+    CHECK(ro == 3 && t.over == 0, "screen and body agree: the screen's orientation, nothing replaced");
+    for (int i = 0; i < 29; i++) ro = motion_orient_update(&t, 3, gport, 30);
+    CHECK(ro == 3 && t.over == 0, "a different candidate must hold for the whole run before it counts");
+    ro = motion_orient_update(&t, 3, gport, 30);
+    CHECK(ro == 1 && t.over == 1, "opened: the body is held in portrait axes while the screen says landscape right, gravity wins");
+    for (int i = 0; i < 100; i++) ro = motion_orient_update(&t, 3, gflat2, 30);
+    CHECK(ro == 1 && t.over == 1, "lying flat keeps the last decision");
+    for (int i = 0; i < 100; i++) ro = motion_orient_update(&t, 3, gtilt, 30);
+    CHECK(ro == 1 && t.over == 1, "a phone tilted back 58 degrees is not confident enough to change anything");
+    for (int i = 0; i < 30; i++) ro = motion_orient_update(&t, 3, gdown3, 30);
+    CHECK(ro == 3 && t.over == 0, "closed again: the replacement ends");
+    motion_orient t2 = {0, 0, 0};
+    for (int i = 0; i < 30; i++) ro = motion_orient_update(&t2, 3, gdown4, 30);
+    CHECK(ro == 4, "held upside down against the screen's word: gravity wins");
+
     printf("t_motion: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

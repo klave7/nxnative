@@ -130,3 +130,25 @@ static inline void motion_phone_to_switch(int orient, const float in[3], float o
     default: out[0] = in[0]; out[1] = in[1]; out[2] = in[2]; break;
     }
 }
+// Which way the phone is really held, from gravity (CoreMotion's gravity vector: toward the ground, in g, in the phone's axes). The screen's orientation says how the picture is turned
+// against the phone's body, which a phone whose screen changes under the player (a foldable opened or closed) can leave as it was while the body is held 90 degrees differently,
+// so its gyro would turn the wrong way. Held upright, gravity runs down the picture (Switch -y) in the right orientation, whichever the screen says. The orientation that puts gravity
+// most nearly down the picture is a candidate; once the same one has been the candidate (clearly: more than 0.6 g down the picture, so not lying flat) for `samples` in a row, it
+// replaces the screen's orientation; when it is the screen's own again the replacement ends. On a phone whose screen follows its body the candidate is always the screen's, so nothing changes
+typedef struct { int over, cand, run; } motion_orient;   // over: the orientation that replaces the screen's (0 none), cand: the current candidate, run: samples it has held
+static inline int motion_orient_from_gravity(const float g[3], float *down) {
+    int best = 1; float bd = 2;
+    for (int o = 1; o <= 4; o++) { float s[3]; motion_phone_to_switch(o, g, s); if (s[1] < bd) { bd = s[1]; best = o; } }
+    if (down) *down = bd;
+    return best;
+}
+// One sample: returns the orientation to map the sensors with (1..4); iface is the screen's
+static inline int motion_orient_update(motion_orient *t, int iface, const float g[3], int samples) {
+    float down; int c = motion_orient_from_gravity(g, &down);
+    if (down > -0.6f) t->run = 0;   // lying flat or in between: keep what was decided
+    else {
+        if (c != t->cand) { t->cand = c; t->run = 0; }
+        if (++t->run >= samples) t->over = c == iface ? 0 : c;
+    }
+    return t->over ? t->over : iface;
+}
