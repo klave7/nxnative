@@ -8,7 +8,7 @@
 //     Breath of the Wild crouches with L3 and uses the scope with R3; 3D World and Breath of the Wild turn the camera with the right stick.
 //   Touch-down ownership: locked keys first (shoulders, − / +, the layout button, L3 / R3), then whichever of the diamond, the D-pad and the left stick has the smallest distance / grab radius (the left stick's grab circle borders the D-pad),
 //     then in 3D the right stick for a touch in the right third.
-//   Everything hugs the edges and corners to leave the picture room; controls sit over the picture, one CAShapeLayer each: a press only swaps the fill, a stick only moves its knob, nothing redraws the whole screen.
+//   Everything hugs the edges and corners to leave the picture room (the left and right margins are the same on both sides: the smaller of the two safe-area insets); controls sit over the picture, one CAShapeLayer each: a press only swaps the fill, a stick only moves its knob, nothing redraws the whole screen.
 //   Touches no control takes (in 3D, those outside the right third) go to the game's touch screen (pushGame; Super Mario Galaxy's pointer in handheld mode).
 //   The virtual gamepad (layout button included) hides while a physical controller is connected and comes back when it is removed; meanwhile every touch goes to the game. Physical controllers keep every button (D-pad and right stick included) and map by position: bottom = B, right = A, left = Y, top = X (same positions as on a Switch controller).
 //   Each physical controller is a player of its own (local co-op), as on the Mac: the first one connected is player 1, together with the touch gamepad, the next player 2, and so on up to 8; see "Physical controllers" below.
@@ -81,6 +81,8 @@ static void motion_start(void) {
 // DM_PHONE_MOTION: auto (default) while no controller supplies fresh gyro data (a DualSense held apart from the phone uses its own, motion_apple.h), 1 always, 0 never.
 // DM_MOTION=0 (all live motion off; the NSP script's --no-motion builds it in) never starts device motion
 static _Atomic int g_iface_orient = 3;      // UIInterfaceOrientation, updated on layout
+static _Atomic int g_phone_rotate = -1;     // DM_PHONE_ROTATE: quarter turns more about the screen's normal (the settings screen's Gyro rotation; the editor changes it while playing); -1 = automatic
+static _Atomic int g_auto_quarter;          // the automatic choice: 1 on a known foldable's inner screen while its window is landscape, else 0 (updated on every layout)
 static void phone_motion_start(void) {
     const char *e = getenv("DM_MOTION");
     if (e && !atoi(e)) { LOG("front end: motion is off (DM_MOTION=0), the phone's gyro is not used"); return; }
@@ -90,12 +92,24 @@ static void phone_motion_start(void) {
     LOG("front end: the phone's gyro drives the controller's six-axis sensor %s", mode < 0 ? "while no controller supplies fresh motion" : "always (DM_PHONE_MOTION=1)");
     g_motion.deviceMotionUpdateInterval = 1.0 / 100;
     NSOperationQueue *q = [NSOperationQueue new]; q.maxConcurrentOperationCount = 1;
+    // The screen's orientation alone (default). DM_PHONE_ORIENT=gravity also follows how the phone is held when that differs from the screen's (an experiment: lying on a side puts gravity along the picture,
+    // which looks like an offset body, so it can turn the gyro wrong there). DM_PHONE_ROTATE=<0..3> turns the sensors that many more quarter turns about the screen's normal, for a screen that sits turned against the body (a foldable's)
+    const char *po = getenv("DM_PHONE_ORIENT"); BOOL track = po && !strcmp(po, "gravity");
+    if (track) LOG("front end: the phone's gyro follows how the phone is held (gravity) when that differs from the screen's orientation (DM_PHONE_ORIENT=gravity)");
+    __block motion_orient track_state = {0, 0, 0}; __block int last_o = 0;
     [g_motion startDeviceMotionUpdatesToQueue:q withHandler:^(CMDeviceMotion *d, NSError *err) {
         (void)err; if (!d) return;
         float a[3] = {(float)(d.gravity.x + d.userAcceleration.x), (float)(d.gravity.y + d.userAcceleration.y), (float)(d.gravity.z + d.userAcceleration.z)};
         float w[3] = {(float)d.rotationRate.x, (float)d.rotationRate.y, (float)d.rotationRate.z}, as[3], ws[3];
         int o = atomic_load(&g_iface_orient);
+        if (track) {
+            float g[3] = {(float)d.gravity.x, (float)d.gravity.y, (float)d.gravity.z};
+            o = motion_orient_update(&track_state, o, g, 30);   // 0.3 s at 100 Hz
+            if (o != last_o) { LOG("front end: gyro orientation %d (the screen says %d)", o, atomic_load(&g_iface_orient)); last_o = o; }
+        }
         motion_phone_to_switch(o, a, as); motion_phone_to_switch(o, w, ws);
+        int quarter = atomic_load(&g_phone_rotate); if (quarter < 0) quarter = atomic_load(&g_auto_quarter);
+        for (int k = 0; k < quarter; k++) { float t = as[0]; as[0] = -as[1]; as[1] = t; t = ws[0]; ws[0] = -ws[1]; ws[1] = t; }   // a quarter turn about z: (x, y) → (−y, x)
         dm_motion_set_switch(0, as, ws);
     }];
 }
@@ -152,7 +166,7 @@ static void pads_start(void);   // Physical controllers, below
     float _dx[E_N], _dy[E_N], _sz[E_N];            // the player's offset (u) and size factor of each control
     BOOL _edit; int _sel;                          // the editor is open / the control being edited (-1 none)
     UITouch *_editTouch; CGPoint _editLast;        // the finger dragging the selected control
-    UIView *_panel; UILabel *_selLabel; UISlider *_slider; UISwitch *_showSwitch;
+    UIView *_panel; UILabel *_selLabel; UISlider *_slider; UISwitch *_showSwitch; UISegmentedControl *_gyroSeg;
     signed char _vis[2][E_N];                      // per layout (2D, 3D): 0 = built-in choice, 1 = the player turned the control on, 2 = off
 }
 
@@ -210,6 +224,9 @@ static CATextLayer *label(CALayer *parent, NSString *s) {
         [nc addObserver:self selector:@selector(padsChanged:) name:GCControllerDidDisconnectNotification object:nil];
         pads_start();
         [self padsChanged:nil];
+        const char *pr = getenv("DM_PHONE_ROTATE"); int quarter = !pr || !*pr || !strcmp(pr, "auto") ? -1 : ((atoi(pr) % 4) + 4) % 4;
+        atomic_store(&g_phone_rotate, quarter);
+        if (quarter >= 0) LOG("front end: the phone's gyro is turned %d quarter turn(s) more (DM_PHONE_ROTATE)", quarter);
         motion_start();
         phone_motion_start();
         const char *ed = getenv("DM_PAD_EDIT");
@@ -236,8 +253,9 @@ static CATextLayer *label(CALayer *parent, NSString *s) {
 }
 
 // ---- Layout (points; computed inside the safe area) ----
-- (CGRect)safe { return UIEdgeInsetsInsetRect(self.bounds, self.safeAreaInsets); }
-- (CGRect)corner { UIEdgeInsets i = self.safeAreaInsets; i.left *= K_CORNER_IN; i.right *= K_CORNER_IN; return UIEdgeInsetsInsetRect(self.bounds, i); }   // the rectangle the bottom-corner controls use
+- (UIEdgeInsets)padInsets { UIEdgeInsets i = self.safeAreaInsets; i.left = i.right = MIN(i.left, i.right); return i; }   // the sides match: the camera's side no longer pushes its controls in, both sides take the smaller inset (none where one side is clear)
+- (CGRect)safe { return UIEdgeInsetsInsetRect(self.bounds, self.padInsets); }
+- (CGRect)corner { UIEdgeInsets i = self.padInsets; i.left *= K_CORNER_IN; i.right *= K_CORNER_IN; return UIEdgeInsetsInsetRect(self.bounds, i); }   // the rectangle the bottom-corner controls use
 - (CGFloat)u { return MIN(self.bounds.size.height / 430.0, 1.3); }   // 1 = 430 points tall (iPhone Pro Max landscape)
 static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPointMake(right ? CGRectGetMaxX(s) - dx : CGRectGetMinX(s) + dx, y); }
 static CGPoint add(CGPoint a, CGPoint b) { return CGPointMake(a.x + b.x, a.y + b.y); }
@@ -452,12 +470,19 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         UILabel *sl = [UILabel new]; sl.text = @"Show on screen"; sl.textColor = UIColor.whiteColor; sl.font = [UIFont systemFontOfSize:14];
         _showSwitch = [UISwitch new]; [_showSwitch addTarget:self action:@selector(showChanged:) forControlEvents:UIControlEventValueChanged];
         UIStackView *show = [[UIStackView alloc] initWithArrangedSubviews:@[sl, _showSwitch]]; show.alignment = UIStackViewAlignmentCenter; show.distribution = UIStackViewDistributionEqualSpacing;
+        UILabel *gl = [UILabel new]; gl.text = @"Gyro rotation"; gl.textColor = UIColor.whiteColor; gl.font = [UIFont systemFontOfSize:14];
+        _gyroSeg = [[UISegmentedControl alloc] initWithItems:@[@"Auto", @"0°", @"90°", @"180°", @"270°"]];
+        _gyroSeg.overrideUserInterfaceStyle = UIUserInterfaceStyleDark; _gyroSeg.selectedSegmentTintColor = UIColor.whiteColor;   // white labels on the dark panel, the chosen one black on a white pill
+        [_gyroSeg setTitleTextAttributes:@{NSForegroundColorAttributeName: UIColor.whiteColor} forState:UIControlStateNormal];
+        [_gyroSeg setTitleTextAttributes:@{NSForegroundColorAttributeName: UIColor.blackColor} forState:UIControlStateSelected];
+        [_gyroSeg addTarget:self action:@selector(gyroChanged:) forControlEvents:UIControlEventValueChanged];
+        UIStackView *gyro = [[UIStackView alloc] initWithArrangedSubviews:@[gl, _gyroSeg]]; gyro.alignment = UIStackViewAlignmentCenter; gyro.distribution = UIStackViewDistributionEqualSpacing;
         UIStackView *row = [UIStackView new]; row.distribution = UIStackViewDistributionFillEqually;
         for (NSArray *a in @[@[@"Reset control", NSStringFromSelector(@selector(resetControl))], @[@"Reset all", NSStringFromSelector(@selector(resetAll))], @[@"Done", NSStringFromSelector(@selector(leaveEdit))]]) {
             UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem]; [b setTitle:a[0] forState:UIControlStateNormal]; b.tintColor = UIColor.whiteColor;
             [b addTarget:self action:NSSelectorFromString(a[1]) forControlEvents:UIControlEventTouchUpInside]; [row addArrangedSubview:b];
         }
-        UIStackView *col = [[UIStackView alloc] initWithArrangedSubviews:@[_selLabel, show, _slider, row]];
+        UIStackView *col = [[UIStackView alloc] initWithArrangedSubviews:@[_selLabel, show, _slider, gyro, row]];
         col.axis = UILayoutConstraintAxisVertical; col.spacing = 8; col.translatesAutoresizingMaskIntoConstraints = NO;
         [_panel addSubview:col];
         [NSLayoutConstraint activateConstraints:@[[col.leadingAnchor constraintEqualToAnchor:_panel.leadingAnchor constant:16], [col.trailingAnchor constraintEqualToAnchor:_panel.trailingAnchor constant:-16],
@@ -473,16 +498,23 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 }
 - (void)layoutEditor {
     if (!_panel) return;
-    CGRect s = self.safe; CGFloat w = MIN(340, s.size.width * 0.6), h = 152;
+    CGRect s = self.safe; CGFloat w = MIN(340, s.size.width * 0.6), h = 190;
     _panel.frame = CGRectMake(floor(CGRectGetMidX(s) - w / 2), floor(CGRectGetMidY(s) - h / 2), w, h);
 }
 - (void)syncPanel {
     static NSString *const names[E_N] = {@"Face buttons", @"Left stick", @"D-pad", @"ZL", @"L", @"ZR", @"R", @"L3", @"R3", @"−", @"+"};
     _slider.enabled = _showSwitch.enabled = _sel >= 0;
+    _gyroSeg.selectedSegmentIndex = atomic_load(&g_phone_rotate) + 1;
     _showSwitch.on = _sel >= 0 && [self on:_sel];
     if (_sel < 0) { _selLabel.text = @"Drag a control to move it"; _slider.value = 1; }
     else { _slider.value = _sz[_sel]; _selLabel.text = [NSString stringWithFormat:@"%@: size %d %%", names[_sel], (int)lrintf(_sz[_sel] * 100)]; }
     [self refresh];
+}
+- (void)gyroChanged:(UISegmentedControl *)c {   // the phone's gyro turned this many quarter turns more; kept as the settings screen's Gyro rotation, so the next start has it
+    int q = (int)c.selectedSegmentIndex - 1; atomic_store(&g_phone_rotate, q);   // -1: Auto, the settings screen's default, which is not stored
+    NSUserDefaults *d = NSUserDefaults.standardUserDefaults; NSString *k = @"launcher.DM_PHONE_ROTATE";
+    if (q >= 0) [d setObject:[NSString stringWithFormat:@"%d", q] forKey:k]; else [d removeObjectForKey:k];
+    LOG("front end: gyro rotation %s (control editor)", q < 0 ? "automatic" : (q == 0 ? "0" : q == 1 ? "1 quarter turn" : q == 2 ? "2 quarter turns" : "3 quarter turns"));
 }
 - (void)showChanged:(UISwitch *)w {
     if (_sel < 0) return;
@@ -584,6 +616,21 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     UIWindowScene *ws = self.window.windowScene; if (ws) atomic_store(&g_iface_orient, (int)ws.effectiveGeometry.interfaceOrientation);
+    if (ws) {   // what the screen reports, once per change (a foldable's open / closed shows here): the facts a gyro correction for it is made from
+        UIScreen *sc = ws.screen; CGRect nb = sc.nativeBounds; static CGRect lastB; static CGSize lastN; static int lastO;
+        int o = (int)ws.effectiveGeometry.interfaceOrientation;
+        if (!CGRectEqualToRect(lastB, self.bounds) || !CGSizeEqualToSize(lastN, nb.size) || lastO != o) {
+            lastB = self.bounds; lastN = nb.size; lastO = o;
+            LOG("front end: screen %.0fx%.0f points, native %.0fx%.0f px, scale %.1f, interface orientation %d", self.bounds.size.width, self.bounds.size.height, nb.size.width, nb.size.height, sc.nativeScale, o);
+        }
+        // The automatic gyro rotation: a known foldable's inner screen (native size, either way round) needs one quarter turn more than the interface orientation gives while its window is
+        // landscape, and none in portrait (found on the iPhone Duo: 2007 x 2853 px, the gyro right with one more quarter turn in landscape, orientations 3 and 4, and as the orientation says
+        // in portrait; the closed screen, 1398 x 2034 px, follows the orientation like any phone). The window's shape decides, not the orientation the screen reports, which can lag a rotation;
+        // it is worked out on every layout, so no change is missed
+        CGFloat nlo = fmin(nb.size.width, nb.size.height), nhi = fmax(nb.size.width, nb.size.height);
+        int q = (nlo == 2007 && nhi == 2853 && self.bounds.size.width > self.bounds.size.height) ? 1 : 0;
+        if (q != atomic_exchange(&g_auto_quarter, q)) LOG("front end: automatic gyro rotation is now %d quarter turn(s)", q);
+    }
     CGFloat u = self.u;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     _controls.frame = self.layer.bounds;
