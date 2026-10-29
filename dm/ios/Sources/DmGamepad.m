@@ -86,7 +86,7 @@ static void motion_start(void) {
 // Duo's inner display, whose picture is a quarter turn from it (up / down and left / right swapped, GitHub issue #569). Open: while the scene is not full screen (Split View on the
 // inner display) Core Motion falls back to the hardware frame without saying so, and the samples are then taken as the view's frame
 static _Atomic int g_iface_orient = 3;      // UIInterfaceOrientation, updated on layout
-static _Atomic int g_phone_rotate = -1;     // DM_PHONE_ROTATE: quarter turns more about the screen's normal (the settings screen's Gyro rotation; the editor changes it while playing); -1 = automatic
+static _Atomic int g_phone_rotate = -1;     // DM_PHONE_ROTATE: quarter turns more about the screen's normal (the settings screen's Gyro rotation); -1 = automatic
 static _Atomic int g_auto_quarter;          // the automatic choice: 1 on a known foldable's inner screen while its window is landscape, else 0 (updated on every layout)
 static BOOL g_motion_body;                  // samples in the body's frame (iOS 27+)
 static void phone_motion_start(UIView *body) {
@@ -177,7 +177,7 @@ static void pads_start(void);   // Physical controllers, below
     float _dx[E_N], _dy[E_N], _sz[E_N];            // the player's offset (u) and size factor of each control
     BOOL _edit; int _sel;                          // the editor is open / the control being edited (-1 none)
     UITouch *_editTouch; CGPoint _editLast;        // the finger dragging the selected control
-    UIView *_panel; UILabel *_selLabel; UISlider *_slider; UISwitch *_showSwitch; UISegmentedControl *_gyroSeg;
+    UIView *_panel; UILabel *_selLabel; UISlider *_slider; UISwitch *_showSwitch; UIStackView *_mainStack;   // the panel: the control's settings
     signed char _vis[2][E_N];                      // per layout (2D, 3D): 0 = built-in choice, 1 = the player turned the control on, 2 = off
 }
 
@@ -496,23 +496,16 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
         UILabel *sl = [UILabel new]; sl.text = @"Show on screen"; sl.textColor = UIColor.whiteColor; sl.font = [UIFont systemFontOfSize:14];
         _showSwitch = [UISwitch new]; [_showSwitch addTarget:self action:@selector(showChanged:) forControlEvents:UIControlEventValueChanged];
         UIStackView *show = [[UIStackView alloc] initWithArrangedSubviews:@[sl, _showSwitch]]; show.alignment = UIStackViewAlignmentCenter; show.distribution = UIStackViewDistributionEqualSpacing;
-        UILabel *gl = [UILabel new]; gl.text = @"Gyro rotation"; gl.textColor = UIColor.whiteColor; gl.font = [UIFont systemFontOfSize:14];
-        _gyroSeg = [[UISegmentedControl alloc] initWithItems:@[@"Auto", @"0°", @"90°", @"180°", @"270°"]];
-        _gyroSeg.overrideUserInterfaceStyle = UIUserInterfaceStyleDark; _gyroSeg.selectedSegmentTintColor = UIColor.whiteColor;   // white labels on the dark panel, the chosen one black on a white pill
-        [_gyroSeg setTitleTextAttributes:@{NSForegroundColorAttributeName: UIColor.whiteColor} forState:UIControlStateNormal];
-        [_gyroSeg setTitleTextAttributes:@{NSForegroundColorAttributeName: UIColor.blackColor} forState:UIControlStateSelected];
-        [_gyroSeg addTarget:self action:@selector(gyroChanged:) forControlEvents:UIControlEventValueChanged];
-        UIStackView *gyro = [[UIStackView alloc] initWithArrangedSubviews:@[gl, _gyroSeg]]; gyro.alignment = UIStackViewAlignmentCenter; gyro.distribution = UIStackViewDistributionEqualSpacing;
         UIStackView *row = [UIStackView new]; row.distribution = UIStackViewDistributionFillEqually;
         for (NSArray *a in @[@[@"Reset control", NSStringFromSelector(@selector(resetControl))], @[@"Reset all", NSStringFromSelector(@selector(resetAll))], @[@"Done", NSStringFromSelector(@selector(leaveEdit))]]) {
             UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem]; [b setTitle:a[0] forState:UIControlStateNormal]; b.tintColor = UIColor.whiteColor;
             [b addTarget:self action:NSSelectorFromString(a[1]) forControlEvents:UIControlEventTouchUpInside]; [row addArrangedSubview:b];
         }
-        UIStackView *col = [[UIStackView alloc] initWithArrangedSubviews:@[_selLabel, show, _slider, gyro, row]];
-        col.axis = UILayoutConstraintAxisVertical; col.spacing = 8; col.translatesAutoresizingMaskIntoConstraints = NO;
-        [_panel addSubview:col];
-        [NSLayoutConstraint activateConstraints:@[[col.leadingAnchor constraintEqualToAnchor:_panel.leadingAnchor constant:16], [col.trailingAnchor constraintEqualToAnchor:_panel.trailingAnchor constant:-16],
-                                                   [col.topAnchor constraintEqualToAnchor:_panel.topAnchor constant:10], [col.bottomAnchor constraintEqualToAnchor:_panel.bottomAnchor constant:-6]]];
+        _mainStack = [[UIStackView alloc] initWithArrangedSubviews:@[_selLabel, show, _slider, row]];
+        _mainStack.axis = UILayoutConstraintAxisVertical; _mainStack.spacing = 8; _mainStack.translatesAutoresizingMaskIntoConstraints = NO;
+        [_panel addSubview:_mainStack];
+        [NSLayoutConstraint activateConstraints:@[[_mainStack.leadingAnchor constraintEqualToAnchor:_panel.leadingAnchor constant:16], [_mainStack.trailingAnchor constraintEqualToAnchor:_panel.trailingAnchor constant:-16],
+                                                   [_mainStack.topAnchor constraintEqualToAnchor:_panel.topAnchor constant:10], [_mainStack.bottomAnchor constraintLessThanOrEqualToAnchor:_panel.bottomAnchor constant:-6]]];
         [self addSubview:_panel];
     }
     _panel.hidden = NO; [self applyLayout]; [self syncPanel]; [self setNeedsLayout];
@@ -524,23 +517,16 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 }
 - (void)layoutEditor {
     if (!_panel) return;
-    CGRect s = self.safe; CGFloat w = MIN(340, s.size.width * 0.6), h = 190;
+    CGRect s = self.safe; CGFloat w = MIN(340, s.size.width * 0.6), h = 150;
     _panel.frame = CGRectMake(floor(CGRectGetMidX(s) - w / 2), floor(CGRectGetMidY(s) - h / 2), w, h);
 }
 - (void)syncPanel {
     static NSString *const names[E_N] = {@"Face buttons", @"Left stick", @"D-pad", @"ZL", @"L", @"ZR", @"R", @"L3", @"R3", @"−", @"+"};
     _slider.enabled = _showSwitch.enabled = _sel >= 0;
-    _gyroSeg.selectedSegmentIndex = atomic_load(&g_phone_rotate) + 1;
     _showSwitch.on = _sel >= 0 && [self on:_sel];
     if (_sel < 0) { _selLabel.text = @"Drag a control to move it"; _slider.value = 1; }
     else { _slider.value = _sz[_sel]; _selLabel.text = [NSString stringWithFormat:@"%@: size %d %%", names[_sel], (int)lrintf(_sz[_sel] * 100)]; }
     [self refresh];
-}
-- (void)gyroChanged:(UISegmentedControl *)c {   // the phone's gyro turned this many quarter turns more; kept as the settings screen's Gyro rotation, so the next start has it
-    int q = (int)c.selectedSegmentIndex - 1; atomic_store(&g_phone_rotate, q);   // -1: Auto, the settings screen's default, which is not stored
-    NSUserDefaults *d = NSUserDefaults.standardUserDefaults; NSString *k = @"launcher.DM_PHONE_ROTATE";
-    if (q >= 0) [d setObject:[NSString stringWithFormat:@"%d", q] forKey:k]; else [d removeObjectForKey:k];
-    LOG("front end: gyro rotation %s (control editor)", q < 0 ? "automatic" : (q == 0 ? "0" : q == 1 ? "1 quarter turn" : q == 2 ? "2 quarter turns" : "3 quarter turns"));
 }
 - (void)showChanged:(UISwitch *)w {
     if (_sel < 0) return;
