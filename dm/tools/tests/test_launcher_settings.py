@@ -97,13 +97,15 @@ class LauncherSettingsTests(unittest.TestCase):
         self.assertEqual(listed['schema'], 1)
         self.assertEqual([e for e, s in rows.items() if s.get('level') == 'basic'], ['DM_FPS_TARGET', 'DM_RENDER_SCALE', 'DM_OPMODE', 'DM_LANG', 'DM_RUMBLE'])
         self.assertEqual(rows['DM_RUMBLE_GAIN']['needs'], 'DM_RUMBLE=1')
-        self.assertFalse({'level', 'needs'} & set(rows['DM_METAL_HUD']), 'a row without meta has no optional fields')
+        self.assertFalse({'level', 'needs', 'device'} & set(rows['DM_METAL_HUD']), 'a row without meta has no optional fields')
+        self.assertEqual(rows['DM_PORTRAIT_LAYOUT']['device'], 'foldable', 'the iPhone Duo portrait layout is drawn only on a Duo')
 
     def test_meta_is_strict(self):
         self.assertEqual(settings.meta('level=basic; needs=DM_RUMBLE=1', 1), {'level': 'basic', 'needs': 'DM_RUMBLE=1'})
         self.assertEqual(settings.meta('', 1), {})
+        self.assertEqual(settings.meta('device=foldable', 1), {'device': 'foldable'})
         for bad, why in [('colour=red', 'unknown meta key'), ('level', 'unknown meta key'), ('level=basic;level=basic', 'twice'),
-                         ('level=advanced', 'does not match'), ('needs=DM_RUMBLE', 'does not match'), ('needs=rumble=1', 'does not match')]:
+                         ('level=advanced', 'does not match'), ('needs=DM_RUMBLE', 'does not match'), ('needs=rumble=1', 'does not match'), ('device=tablet', 'does not match')]:
             with self.subTest(bad=bad), self.assertRaises(SystemExit) as e:
                 settings.meta(bad, 1)
             self.assertIn(why, str(e.exception))

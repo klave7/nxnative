@@ -31,6 +31,7 @@
         "base": {"description": "Render scale only: the 3D views' size the scale multiplies, docked and handheld, from the game's profile; absent for most games.", "type": "object", "required": ["docked", "handheld"],
                  "properties": {"docked": {"$ref": "#/$defs/size"}, "handheld": {"$ref": "#/$defs/size"}}},
         "level": {"description": "basic: a setting a front end shows first. Without it, the front end decides.", "const": "basic"},
+        "device": {"description": "foldable: a setting only an iPhone Duo can use. A front end that can tell the device draws it only there; one that cannot may leave it out or draw it, where it does nothing.", "const": "foldable"},
         "needs": {"description": "<VAR>=<value>: a sub-setting, drawn only while the row that sets <VAR> has that value. A row naming a variable this list does not have stays drawn.", "type": "string", "pattern": "^DM_[A-Z0-9_]+=[^;=]+$"}
       },
       "allOf": [

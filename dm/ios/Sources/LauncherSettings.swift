@@ -1,11 +1,32 @@
 // Launcher settings, validation and persistence. Shared by the iOS UI, the Mac app's settings window (dm/mac/Launcher.swift) and the native storage regression test.
 import Foundation
 import Combine
+#if canImport(UIKit)
+import UIKit
+#endif
+
+// The kind of device this app runs on, for a setting that only one kind can use (meta device=foldable: the iPhone Duo). The Duo's inner screen is recognized by its shape, as DmGamepad.m's
+// dm_foldable_inner_screen does; the closed outer screen looks like any phone, so a Duo that has once run the game on its inner screen is remembered (DmGamepad.m sets the flag)
+enum DeviceKind {
+    static let foldableSeenKey = "dm.foldable_inner_seen"
+    static var foldable: Bool {
+#if canImport(UIKit)
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let px = (scene?.screen ?? UIScreen.main).nativeBounds.size
+        let lo = min(px.width, px.height), hi = max(px.width, px.height)
+        if lo >= 1700 && abs(lo / hi - 0.7035) < 0.0021 { return true }
+        return UserDefaults.standard.bool(forKey: foldableSeenKey)
+#else
+        return false
+#endif
+    }
+}
 
 struct Setting: Decodable, Identifiable {
     let env, kind, label, note, def: String
     let section: String?   // heading on the settings screen; absent in older bundles
     let needs: String?     // "<VAR>=<value>": a sub-setting, drawn only while that setting has that value
+    let device: String?    // "foldable": only the iPhone Duo can use it; drawn only there (a front end that cannot tell the device leaves it out)
     let level: String?     // "basic": shown first (the Mac window's Basic settings); any other or none: Advanced settings. The iPhone keeps one list
     let base: Base?        // render scale: the 3D views' size at 1.0, docked and handheld, for the size in pixels (the Mac window)
     struct Base: Decodable { let docked, handheld: [Int] }
@@ -30,7 +51,7 @@ struct Setting: Decodable, Identifiable {
         default: return true
         }
     }
-    enum CodingKeys: String, CodingKey { case env, kind, label, note, def = "default", section, needs, level, base, options, min, max, step, on, off }
+    enum CodingKeys: String, CodingKey { case env, kind, label, note, def = "default", section, needs, device, level, base, options, min, max, step, on, off }
 }
 struct SettingsFile: Decodable { let settings: [Setting] }
 
@@ -65,6 +86,7 @@ final class LauncherModel: ObservableObject {
     // setting that cannot do anything is not offered (an upscaler's detail with the upscaler off, rumble strength
     // with rumble off). A row naming a setting this game does not have stays drawn, as it has nothing to hide behind
     func visible(_ s: Setting) -> Bool {
+        if s.device == "foldable" && !DeviceKind.foldable { return false }
         guard let n = s.needs, let eq = n.firstIndex(of: "=") else { return true }
         let key = String(n[n.startIndex..<eq]), want = String(n[n.index(after: eq)...])
         guard let v = values[key] else { return true }

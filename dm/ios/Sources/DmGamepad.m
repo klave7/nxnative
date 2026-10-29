@@ -640,6 +640,7 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         // orientation like any phone). An earlier test that seemed to say "no turn in portrait" was a landscape-only app letterboxed in a portrait screen, which reports orientation 3 there: with the portrait
         // layout off that case still wants 0 degrees by hand. Worked out on every layout, so no change is missed
         int q = dm_foldable_inner_screen(nb.size) ? 1 : 0;
+        if (q) [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"dm.foldable_inner_seen"];   // the settings screen shows the iPhone Duo's settings on a Duo with its closed screen too (DeviceKind.foldable)
         if (q != atomic_exchange(&g_auto_quarter, q)) LOG("front end: automatic gyro rotation is now %d quarter turn(s)", q);
     }
     CGFloat u = self.u;

@@ -17,6 +17,7 @@ SCHEMA = 1   # launcher.json's version (docs/launcher.schema.json); it grows onl
 META = {
     'level': r'basic',                       # a setting a front end shows first; without it, the front end decides
     'needs': r'DM_[A-Z0-9_]+=[^;=]+',        # <VAR>=<value>: a sub-setting, drawn only while the row that sets <VAR> has that value
+    'device': r'foldable',                   # a setting only that kind of device can use (the iPhone Duo): a front end that can tell shows it only there
 }
 
 
