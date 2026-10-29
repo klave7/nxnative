@@ -23,6 +23,7 @@ DM_PRESENT_UPSCALE	choice	off=Standard,metalfx=MetalFX	off	always	Game	Upscaling
 DM_LANG	choice	languages	build:DM_LANG	languages>1	Game	Game language		level=basic
 DM_FULLSCREEN	choice	0=Window,1=Fullscreen	0	platform:mac	Game	Display mode		level=basic
 DM_SHOW_FPS	toggle	-	build:DM_SHOW_FPS	platform:ios	Game	Frame-rate counter
+DM_PORTRAIT_LAYOUT	toggle	-	1	platform:ios	Controls	Portrait: game above the controls	When the screen is held upright (the iPhone Duo's inner screen), the game is shown at the top and the controls below it.
 DM_TOUCH_HAPTICS	toggle	-	1	platform:ios	Controls	Touch feedback
 DM_PAD_EDIT	toggle	-	0	platform:ios	Controls	Edit controls at start	Opens the control editor once when the game starts. You can also press and hold the layout button during play.
 DM_PHONE_ROTATE	choice	auto=Automatic,0=0°,1=90°,2=180°,3=270°	auto	platform:ios	Controls	Gyro rotation	Automatic turns the motion controls for the iPhone Duo's inner screen and leaves other phones as they are. Choose a turn by hand if the pointer or aiming comes out turned.

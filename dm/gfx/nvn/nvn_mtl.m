@@ -453,7 +453,7 @@ void mtl_init(void) {
     g_present_args = [g_dev newArgumentTableWithDescriptor:pad error:&ate];
     if (!g_present_args) MDIE("failed to create the present argument table: %s", ate.localizedDescription.UTF8String);
     for (int i = 0; i < 3; i++) {
-        g_present_uv[i] = [g_dev newBufferWithLength:sizeof(float) * 16 options:MTLResourceStorageModeShared];   // 8 floats for the picture's crop, 8 for the bars' image (present_encode_m4)
+        g_present_uv[i] = [g_dev newBufferWithLength:sizeof(float) * 24 options:MTLResourceStorageModeShared];   // 8 floats for the picture's crop, 8 for the bars' image, 8 for the controls' image (present_encode_m4)
         if (!g_present_uv[i]) MDIE("failed to create present UV buffer[%d]", i);
         res_add(g_present_uv[i]);
     }
@@ -10439,7 +10439,22 @@ static id<MTLTexture> present_raw_src(id<MTLTexture> src) {
 // The rectangle of the canvas (dw x dh) the picture (cw x ch) is drawn into: the picture's aspect ratio kept and centred, black bars in the rest (no stretching when the screen's ratio
 // differs from the game's, e.g. iPhone about 19.5:9 against the game's 16:9); when the ratios differ by under 1 % (the remainder from a game width that is a multiple of 8 in the
 // full-screen setup, e.g. 1952x900 against 2868x1320 differs by 0.17 %) the whole canvas, leaving no border of a few pixels
+// The portrait layout (front_ios.m: a screen taller than wide, the iPhone Duo's inner screen held upright): the canvas is split at g_split_y of its height from the top. The picture is centred in the top part
+// (below g_split_top of the height, the camera's area), with the bars' fill around it; the lower part shows the controls' image (mtl_set_controls_image) behind the on-screen controls. Fractions of the
+// canvas, so the screen's scale does not matter. g_split_y < 0: no split
+static _Atomic double g_split_top = -1, g_split_y = -1;
+void mtl_set_present_split(double top, double split) { atomic_store_explicit(&g_split_top, top, memory_order_relaxed); atomic_store_explicit(&g_split_y, split, memory_order_relaxed); }
+static int present_split(double dw, double dh, double *top, double *y) {
+    double t = atomic_load_explicit(&g_split_top, memory_order_relaxed), s = atomic_load_explicit(&g_split_y, memory_order_relaxed);
+    if (!(s > 0 && s < 1 && dh > dw)) return 0;
+    *top = t > 0 && t < s ? t * dh : 0; *y = s * dh; return 1;
+}
 static MTLViewport present_viewport(double cw, double ch, double dw, double dh) {
+    double st, sy;
+    if (present_split(dw, dh, &st, &sy)) {   // centred in the top part, under the camera's area
+        double rh = sy - st, s = fmin(dw / cw, rh / ch);
+        return (MTLViewport){floor((dw - cw * s) / 2), st + floor((rh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};
+    }
     double s = fmin(dw / cw, dh / ch);
     MTLViewport vp = {floor((dw - cw * s) / 2), floor((dh - ch * s) / 2), round(cw * s), round(ch * s), 0, 1};
     if (fabs((dw / dh) / (cw / ch) - 1) < 0.01) vp = (MTLViewport){0, 0, dw, dh, 0, 1};
@@ -10568,26 +10583,33 @@ static int bar_mode(void) {   // 0 black, 1 blurred picture, 2 still image
     }
     return v;
 }
-static CGImageRef g_bar_cg;                    // the image the front end handed over (retained)
-static __strong id<MTLTexture> g_bar_img;      // its texture, made on the present thread at the first present that needs it (the device may not exist when the front end calls)
-static _Atomic double g_bar_img_aspect;
+static CGImageRef g_bar_cg, g_ctl_cg;          // the images the front end handed over (retained): the bars' (bar_background.jpg) and the controls' (controls_background.jpg)
+static __strong id<MTLTexture> g_bar_img, g_ctl_img;   // their textures, made on the present thread at the first present that needs them (the device may not exist when the front end calls)
+static _Atomic double g_bar_img_aspect, g_ctl_img_aspect;
 void mtl_set_bar_image(CGImageRef img) { if (img) { CGImageRetain(img); g_bar_cg = img; } }
-static id<MTLTexture> bar_image(void) {
-    if (g_bar_img || !g_bar_cg) return g_bar_img;
-    size_t w = CGImageGetWidth(g_bar_cg), h = CGImageGetHeight(g_bar_cg);
-    CGImageRef cg = g_bar_cg; g_bar_cg = NULL;   // one try
-    if (!w || !h || w > 8192 || h > 8192) { MLOG("[RED] present bars: the image is %zux%zu, not used", w, h); CGImageRelease(cg); return nil; }
+void mtl_set_controls_image(CGImageRef img) { if (img) { CGImageRetain(img); g_ctl_cg = img; } }
+static id<MTLTexture> cg_texture(CGImageRef *cgp, const char *what, _Atomic double *aspect) {   // one try; the CGImage is released
+    CGImageRef cg = *cgp; *cgp = NULL; if (!cg) return nil;
+    size_t w = CGImageGetWidth(cg), h = CGImageGetHeight(cg);
+    if (!w || !h || w > 8192 || h > 8192) { MLOG("[RED] present: the %s image is %zux%zu, not used", what, w, h); CGImageRelease(cg); return nil; }
     uint8_t *px = calloc(w * h, 4); CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     CGContextRef cx = px && cs ? CGBitmapContextCreate(px, w, h, 8, w * 4, cs, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little) : NULL;   // BGRA, the drawable's own layout: the bytes show as they are
     if (cx) CGContextDrawImage(cx, CGRectMake(0, 0, w, h), cg);
     MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:w height:h mipmapped:NO];
     d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModeShared;
     id<MTLTexture> t = cx ? [g_dev newTextureWithDescriptor:d] : nil;
-    if (t) { [t replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:px bytesPerRow:w * 4]; t.label = @"present bars image"; res_add(t); res_commit(); g_bar_img = t; atomic_store(&g_bar_img_aspect, (double)w / h);
-        MLOG("present bars: the still image is %zux%zu", w, h); }
-    else MLOG("[RED] present bars: cannot make a texture of the image (%zux%zu)", w, h);
+    if (t) { [t replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:px bytesPerRow:w * 4]; t.label = @(what); res_add(t); res_commit(); atomic_store(aspect, (double)w / h);
+        MLOG("present: the %s image is %zux%zu", what, w, h); }
+    else MLOG("[RED] present: cannot make a texture of the %s image (%zux%zu)", what, w, h);
     if (cx) CGContextRelease(cx); if (cs) CGColorSpaceRelease(cs); free(px); CGImageRelease(cg);
-    return g_bar_img;
+    return t;
+}
+static id<MTLTexture> bar_image(void) { if (!g_bar_img && g_bar_cg) g_bar_img = cg_texture(&g_bar_cg, "present bars", &g_bar_img_aspect); return g_bar_img; }
+static id<MTLTexture> ctl_image(void) { if (!g_ctl_img && g_ctl_cg) g_ctl_img = cg_texture(&g_ctl_cg, "present controls", &g_ctl_img_aspect); return g_ctl_img; }
+// The constants (crop rectangle of the quad) that make an image of shape ia cover a region of shape ca, cropped from its middle
+static void cover_uv(float *k, double ia, double ca) {
+    double w2 = ca > ia ? 1 : ca / ia, h2 = ca > ia ? ia / ca : 1;
+    k[0] = (float)((1 - w2) / 2); k[1] = (float)((1 - h2) / 2); k[2] = (float)w2; k[3] = (float)h2; k[4] = 0; k[5] = 0; k[6] = 1; k[7] = 1;
 }
 static void bar_pass_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> to, id<MTLRenderPipelineState> pso, id<MTLTexture> from, id<MTLBuffer> uvb) {
     MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
@@ -10626,26 +10648,27 @@ static id<MTLTexture> bar_blur_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> tex, 
 static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4], id<MTLBuffer> uvb, fx_state *fx) {
     NSUInteger r[4]; if (!present_crop_rect(src, crop, r)) return 0;
     present_pipeline(dst.pixelFormat);
-    double dw = dst.width, dh = dst.height;
+    double dw = dst.width, dh = dst.height, st = 0, sy = 0;
+    int split = present_split(dw, dh, &st, &sy);   // the portrait layout: the picture centred in the top part, the controls' image in the lower part
     MTLViewport vp = present_viewport(r[2], r[3], dw, dh);
-    int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
+    int full = !split && vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
     if (r[2] && r[3]) atomic_store_explicit(&g_present_aspect, (double)r[2] / (double)r[3], memory_order_relaxed);
     id<MTLTexture> tex = present_raw_src(src), up = fx ? fx_encode(fx, cb, tex, r, vp, dst.pixelFormat, fx == &g_fx_present) : nil;
     if (up) { tex = up; r[0] = r[1] = 0; r[2] = up.width; r[3] = up.height; }   // the scaled picture, the viewport's size: drawn 1:1
-    int mode = !full && fx == &g_fx_present ? bar_mode() : 0;   // not in a screenshot's present
-    id<MTLTexture> bg = nil, img = mode == 2 ? bar_image() : nil;
+    int live = fx == &g_fx_present;   // not a screenshot's present: its bars and lower part stay black
+    int mode = !full && live ? bar_mode() : 0;
+    double bw = dw, bh = split ? sy : dh;   // the bars' region: the whole canvas, or the top part
+    id<MTLTexture> bg = nil, img = mode == 2 ? bar_image() : nil, cimg = split && live ? ctl_image() : nil;
     float *uv = uvb.contents; NSUInteger tw = tex.width, th = tex.height, cx = r[0], cy = r[1], cw = r[2], ch = r[3];
     uv[0] = (float)cx / tw; uv[1] = (float)cy / th; uv[2] = (float)cw / tw; uv[3] = (float)ch / th;
     uv[4] = (cx + 0.5f) / tw; uv[5] = (cy + 0.5f) / th; uv[6] = (cx + cw - 0.5f) / tw; uv[7] = (cy + ch - 0.5f) / th;
     if (atomic_load_explicit(&g_origin_ll, memory_order_relaxed)) { uv[1] += uv[3]; uv[3] = -uv[3]; }   // lower-left origin: the window image is stored bottom-up
-    if (mode == 1) bg = bar_blur_m4(cb, tex, uvb, dst.pixelFormat, dw, dh);
-    if (img) {   // the image covers the canvas, cropped from its middle (constants in the buffer's second half)
-        double ia = atomic_load(&g_bar_img_aspect), ca = dw / dh, w2 = ca > ia ? 1 : ca / ia, h2 = ca > ia ? ia / ca : 1;
-        uv[8] = (float)((1 - w2) / 2); uv[9] = (float)((1 - h2) / 2); uv[10] = (float)w2; uv[11] = (float)h2; uv[12] = 0; uv[13] = 0; uv[14] = 1; uv[15] = 1;
-    }
+    if (mode == 1) bg = bar_blur_m4(cb, tex, uvb, dst.pixelFormat, bw, bh);
+    if (img) cover_uv(uv + 8, atomic_load(&g_bar_img_aspect), bw / bh);                  // the bars' image covers the bars' region (constants in the buffer's second part)
+    if (cimg) cover_uv(uv + 16, atomic_load(&g_ctl_img_aspect), dw / (dh - sy));         // the controls' image covers the lower part (third part)
     MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new];
     rp.colorAttachments[0].texture = dst;
-    rp.colorAttachments[0].loadAction = full || bg || img ? MTLLoadActionDontCare : MTLLoadActionClear;   // the bars' fill draws every pixel
+    rp.colorAttachments[0].loadAction = full || (!split && (bg || img)) ? MTLLoadActionDontCare : MTLLoadActionClear;   // the bars' fill draws every pixel (with a split, the camera's area stays as cleared)
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
     id<MTL4RenderCommandEncoder> en = [cb renderCommandEncoderWithDescriptor:rp];
@@ -10655,13 +10678,18 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
     [g_present_args setTexture:tex.gpuResourceID atIndex:0];
     [g_present_args setSamplerState:g_blit_samp.gpuResourceID atIndex:0];
     [g_present_args setAddress:uvb.gpuAddress atIndex:0];
-    if (bg || img) {   // the dimmed, blurred picture or the still image over the whole canvas, the sharp picture on top of it
+    if (bg || img) {   // the dimmed, blurred picture or the still image over the bars' region, the sharp picture on top of it
         if (bg) [g_present_args setTexture:bg.gpuResourceID atIndex:0];
         else { [g_present_args setTexture:img.gpuResourceID atIndex:0]; [g_present_args setAddress:uvb.gpuAddress + 8 * sizeof(float) atIndex:0]; }
-        [en setViewport:(MTLViewport){0, 0, dw, dh, 0, 1}]; [en setRenderPipelineState:bg ? g_bar_dim_pso : g_blit_pso];
+        [en setViewport:(MTLViewport){0, 0, bw, bh, 0, 1}]; [en setRenderPipelineState:bg ? g_bar_dim_pso : g_blit_pso];
         [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-        [g_present_args setTexture:tex.gpuResourceID atIndex:0]; [g_present_args setAddress:uvb.gpuAddress atIndex:0];
     }
+    if (cimg) {   // the lower part: the controls' image
+        [g_present_args setTexture:cimg.gpuResourceID atIndex:0]; [g_present_args setAddress:uvb.gpuAddress + 16 * sizeof(float) atIndex:0];
+        [en setViewport:(MTLViewport){0, sy, dw, dh - sy, 0, 1}]; [en setRenderPipelineState:g_blit_pso];
+        [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    }
+    if (bg || img || cimg) { [g_present_args setTexture:tex.gpuResourceID atIndex:0]; [g_present_args setAddress:uvb.gpuAddress atIndex:0]; }
     [en setViewport:vp]; [en setRenderPipelineState:g_blit_pso];
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     m4_end(en);
@@ -10671,7 +10699,7 @@ static int present_encode_m4(id<MTL4CommandBuffer> cb, id<MTLTexture> src, id<MT
 // returns whether it was submitted. Completion reports the encoding kind, or PRESENT_FAILED on a GPU error. Resources remain resident and retained until GPU completion.
 static int present_offscreen_m4(id<MTLTexture> src, const int crop[4], id<MTLTexture> out, void (^done)(int)) {
     id<MTL4CommandAllocator> al = [g_dev newCommandAllocator]; id<MTL4CommandBuffer> cb = [g_dev newCommandBuffer];
-    id<MTLBuffer> uvb = [g_dev newBufferWithLength:sizeof(float) * 16 options:MTLResourceStorageModeShared];
+    id<MTLBuffer> uvb = [g_dev newBufferWithLength:sizeof(float) * 24 options:MTLResourceStorageModeShared];
     if (!al || !cb || !uvb) { MLOG("[RED] offscreen present: no command allocator or buffer"); return 0; }
     id<MTLTexture> raw = present_raw_src(src);
     fx_state fx = {0};

@@ -12,6 +12,9 @@
 
 UIView *dm_gamepad_view(CGRect frame);
 void dm_gamepad_reset(void);
+BOOL dm_foldable_inner_screen(CGSize px);   // DmGamepad.m: the iPhone Duo's inner screen, by its native size
+void mtl_set_present_split(double top, double split);   // nvn_mtl.m: the portrait layout's split of the canvas, as fractions of its height (picture centred in the top part under `top`, controls' image below `split`); split < 0 = none
+void mtl_set_controls_image(CGImageRef img);   // nvn_mtl.m: the image behind the controls in the portrait layout (controls_background.jpg)
 void mtl_set_bar_image(CGImageRef img);   // nvn_mtl.m: the still image for the bars (DM_BAR_FILL=image)
 void front_ios_boot(void);
 int front_ios_boot_ok(void);
@@ -48,6 +51,7 @@ static UILabel *front_ios_fps_label(void);
 @property (nonatomic, strong) UIView *pad;
 @property (nonatomic, strong) UILabel *fps;
 @property (nonatomic) BOOL launched;
+@property (nonatomic) BOOL allowedPortrait;   // the orientations last asked for included portrait (see supportedInterfaceOrientations)
 @property (nonatomic) BOOL fill;   // DM_BAR_FILL=blur or image: the game view is the whole screen, and the present fits the picture in it and fills the bars (nvn_mtl.m)
 - (void)startGame;
 @end
@@ -76,6 +80,9 @@ static void launcher_done(void) { [g_root startGame]; }
       if (m && !strcmp(m, "image")) {
           NSString *path = [NSBundle.mainBundle pathForResource:@"bar_background" ofType:@"jpg"]; UIImage *img = path ? [UIImage imageWithContentsOfFile:path] : nil;
           if (img.CGImage) mtl_set_bar_image(img.CGImage); else LOG("[RED] front end: bar_background.jpg is not in the app, the bars stay black"); } }
+    { const char *pe = getenv("DM_PORTRAIT_LAYOUT"); if (!pe || atoi(pe)) {   // the image behind the controls in the portrait layout
+          NSString *path = [NSBundle.mainBundle pathForResource:@"controls_background" ofType:@"jpg"]; UIImage *img = path ? [UIImage imageWithContentsOfFile:path] : nil;
+          if (img.CGImage) mtl_set_controls_image(img.CGImage); else LOG("[RED] front end: controls_background.jpg is not in the app, the area behind the controls stays black"); } }
     self.game = [[DmGameView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:self.game];
     g_layer = (CAMetalLayer *)self.game.layer;
@@ -88,13 +95,23 @@ static void launcher_done(void) { [g_root startGame]; }
     if (self.fps) [self.view addSubview:self.fps];
     [self.view setNeedsLayout]; [self.view layoutIfNeeded];
     UIApplication.sharedApplication.idleTimerDisabled = YES;
+    [self setNeedsUpdateOfSupportedInterfaceOrientations];   // the game is running: portrait may be allowed now (wantsPortrait)
     front_ios_boot();
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGRect b = self.view.bounds; if (!self.game) return;
+    if ([self wantsPortrait] != self.allowedPortrait) {   // folded or unfolded: ask again
+        self.allowedPortrait = !self.allowedPortrait; [self setNeedsUpdateOfSupportedInterfaceOrientations];
+        UIScreen *sc = self.view.window.windowScene.screen ?: UIScreen.mainScreen;
+        LOG("front end: portrait %s (screen native %.0fx%.0f px, window %.0fx%.0f points)", self.allowedPortrait ? "allowed" : "not allowed", sc.nativeBounds.size.width, sc.nativeBounds.size.height, b.size.width, b.size.height);
+    }
     CGFloat w = b.size.width, h = b.size.height;   // Fit 16:9 into the whole screen (or, filling the bars, the whole screen: the present letterboxes the picture inside it)
-    if (self.fill) { /* the whole screen */ }
+    // Portrait (taller than wide, the iPhone Duo's inner screen held upright; DM_PORTRAIT_LAYOUT, on by default): the game view is the whole screen; the present centres the picture in its top half (below
+    // the safe area, with the bars' fill around it) and shows the controls' image in the bottom half, where DmGamepad.m lays the controls out
+    const char *pe = getenv("DM_PORTRAIT_LAYOUT"); BOOL portrait = b.size.height > b.size.width && (!pe || atoi(pe));
+    mtl_set_present_split(portrait ? self.view.safeAreaInsets.top / b.size.height : -1, portrait ? 0.5 : -1);   // fractions: the drawable's scale need not be the screen's
+    if (self.fill || portrait) { /* the whole screen */ }
     else if (w / h > 16.0 / 9.0) w = h * 16.0 / 9.0; else h = w * 9.0 / 16.0;
     self.game.frame = CGRectMake(floor((b.size.width - w) / 2), floor((b.size.height - h) / 2), w, h);
     if (self.fps) {   // the top row's free stretch: right of DmGamepad.m's L3 key (102 + 17 of its units from the safe edge), level with − / + (22 units down); u is its unit
@@ -116,7 +133,16 @@ static void launcher_done(void) { [g_root startGame]; }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeAll; }   // Edge gestures need two swipes, to avoid accidental exits
 - (BOOL)prefersStatusBarHidden { return YES; }
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
+// Landscape only, as the app has always been, except on the iPhone Duo's inner screen once the game is running (and DM_PORTRAIT_LAYOUT is not 0): there portrait is allowed too, so held upright the app gets a
+// window of that shape and DmGamepad.m lays the controls out below the picture. Without it iOS shows a landscape-only app as a landscape window in the middle of the portrait screen, bars above and below.
+// The settings screen (Launcher.swift) stays landscape
+- (BOOL)wantsPortrait {
+    const char *pe = getenv("DM_PORTRAIT_LAYOUT"); if (pe && !atoi(pe)) return NO;
+    if (!self.game) return NO;
+    UIScreen *sc = self.view.window.windowScene.screen ?: UIScreen.mainScreen;
+    return dm_foldable_inner_screen(sc.nativeBounds.size);
+}
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return [self wantsPortrait] ? UIInterfaceOrientationMaskAllButUpsideDown : UIInterfaceOrientationMaskLandscape; }
 @end
 UIViewController *front_ios_root(void) { return [DmRootVC new]; }
 
