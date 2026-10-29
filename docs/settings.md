@@ -4,7 +4,7 @@ The screen before the game starts shows the settings the game supports. A settin
 
 - [Tested defaults](#tested-defaults)
 - [Game](#game): [Frame rate](#frame-rate), [Render scale](#render-scale), [Console mode](#console-mode), [Upscaling](#upscaling), [Game language](#game-language), [Frame-rate counter](#frame-rate-counter), [Bars around the picture](#bars-around-the-picture)
-- [Controls](#controls): [Touch feedback](#touch-feedback), [Edit controls at start](#edit-controls-at-start), [Gyro rotation](#gyro-rotation), [Game rumble](#game-rumble), [Rumble strength](#rumble-strength), [Rumble cutoff](#rumble-cutoff), [Portrait: game above the controls](#portrait-game-above-the-controls)
+- [Controls](#controls): [Touch feedback](#touch-feedback), [Edit controls at start](#edit-controls-at-start), [Gyro rotation](#gyro-rotation), [Game rumble](#game-rumble), [Rumble strength](#rumble-strength), [Rumble cutoff](#rumble-cutoff), [iPhone Duo portrait: game above the controls](#iphone-duo-portrait-game-above-the-controls)
 - [Performance](#performance): [Frame buffering](#frame-buffering), [Metal 4 pipelines](#metal-4-pipelines), [Pipeline prebuild](#pipeline-prebuild), [Encode thread](#encode-thread), [Hold frames when late](#hold-frames-when-late), [Performance HUD](#performance-hud), [Reset to tested defaults](#reset-to-tested-defaults)
 - [The Mac settings window](#the-mac-settings-window): [Display mode](#display-mode)
 - [Settings in a file](#settings-in-a-file)
@@ -86,7 +86,7 @@ Positions are measured from the built-in layout, so a layout you make fits other
 
 ### Gyro rotation
 
-Turns the phone's motion controls (the gyro that drives pointer and aiming games when no controller supplies motion). **Automatic**, the default, adds the quarter turn the iPhone Duo's inner screen needs, in landscape and in portrait; every other phone, and the Duo's closed screen, follow the screen's orientation as before. With **Portrait: game above the controls** turned off, iOS shows the app as a landscape window inside the upright screen and reports it as landscape, so choose **0°** by hand there. If the pointer or aiming still comes out turned (up and down acting as left and right), choose **0°**, **90°**, **180°** or **270°** by hand.
+Turns the phone's motion controls (the gyro that drives pointer and aiming games when no controller supplies motion). **Automatic**, the default, adds the quarter turn the iPhone Duo's inner screen needs, in landscape and in portrait; every other phone, and the Duo's closed screen, follow the screen's orientation as before. With **iPhone Duo portrait: game above the controls** turned off, iOS shows the app as a landscape window inside the upright screen and reports it as landscape, so choose **0°** by hand there. If the pointer or aiming still comes out turned (up and down acting as left and right), choose **0°**, **90°**, **180°** or **270°** by hand.
 
 ### Game rumble
 
@@ -100,9 +100,9 @@ How strong the game's vibration is, from 0 to 300 %.
 
 A controller's vibration weaker than this stays off, and the rest is spread over the full range. Off (0 %) by default. A controller with rotating motors can rumble all the time in a game that sends a quiet texture: Mario Kart 8 Deluxe needs about 45 % to rumble only on crashes and drifts. The phone's own vibration is not affected.
 
-### Portrait: game above the controls
+### iPhone Duo portrait: game above the controls
 
-For a screen taller than wide, such as the iPhone Duo's inner screen held upright. With this on (the default), the screen is split in half. The game's picture is centred in the top half, with whatever **Bars around the picture** says around it (a blurred copy of the picture, the still image, or black). The on-screen controls are all in the bottom half, over a dark background image (`dm/ios/Sources/controls_background.jpg`): the shoulder keys, − and + and the layout button along the top of that half, the left stick and D-pad at the bottom left, the face keys at the bottom right. Touches on the picture still go to the game's touch screen, so a pointer or touch game is played on the top half. Turn it off to get the picture centred with the controls over the whole screen, as before. The app allows portrait only on the iPhone Duo's inner screen once the game is running; every other screen, and the settings screen, stay landscape.
+**This is only for the iPhone Duo's inner screen.** Every other iPhone, and every iPad, stays in landscape and is not affected, whatever this setting says. When the iPhone Duo's inner screen is held upright, with this on (the default), the screen is split in half. The game's picture is centred in the top half, with whatever **Bars around the picture** says around it (a blurred copy of the picture, the still image, or black). The on-screen controls are all in the bottom half, over a dark background image (`dm/ios/Sources/controls_background.jpg`): the shoulder keys, − and + and the layout button along the top of that half, the left stick and D-pad at the bottom left, the face keys at the bottom right. Touches on the picture still go to the game's touch screen, so a pointer or touch game is played on the top half. Turn it off to get the picture centred with the controls over the whole screen, as before. The app allows portrait only on the iPhone Duo's inner screen once the game is running (the screen is recognized by its shape); every other screen, iPads included, and the settings screen, stay landscape.
 
 Control positions and sizes made in the [editor](#edit-controls-at-start) are offsets from the built-in places in each layout, so they carry over to the portrait layout, where the controls sit in a smaller area; adjust them there if they do not fit. A landscape screen is not affected.
 
@@ -212,7 +212,7 @@ Sets every setting back to the game's tested default; **Play** then forgets your
 
 ## The Mac settings window
 
-A Mac app ([A Mac app](development.md#a-mac-app)) shows its settings in a window before the game starts. They are the same settings as on the iPhone, with the same defaults. The window shows the most used ones first: **Frame rate**, **Render scale**, **Console mode**, **Game language**, **Display mode** and **Game rumble**, when the game has them. **Render scale** shows the picture's size in pixels beside the percentage for the chosen **Console mode**, when the game's profile has it (Breath of the Wild: 1600 × 900 docked, 1280 × 720 handheld at 100 %). The others are under **Advanced settings**, in the usual sections, with **Reset to tested defaults**. The window remembers whether Advanced settings is open. **Frame-rate counter**, **Touch feedback**, **Edit controls at start**, **Portrait: game above the controls**, **Gyro rotation** and **Bars around the picture** are only on the iPhone.
+A Mac app ([A Mac app](development.md#a-mac-app)) shows its settings in a window before the game starts. They are the same settings as on the iPhone, with the same defaults. The window shows the most used ones first: **Frame rate**, **Render scale**, **Console mode**, **Game language**, **Display mode** and **Game rumble**, when the game has them. **Render scale** shows the picture's size in pixels beside the percentage for the chosen **Console mode**, when the game's profile has it (Breath of the Wild: 1600 × 900 docked, 1280 × 720 handheld at 100 %). The others are under **Advanced settings**, in the usual sections, with **Reset to tested defaults**. The window remembers whether Advanced settings is open. **Frame-rate counter**, **Touch feedback**, **Edit controls at start**, **iPhone Duo portrait: game above the controls**, **Gyro rotation** and **Bars around the picture** are only on the iPhone.
 
 Click **Play** (or press Return) to start the game. **Quit**, ⌘Q or closing the window ends the app without the game. The app remembers your choices for that game, and a game started without the window, from a front end or with the window turned off, uses them too ([Saved choices](frontends.md#saved-choices)). A setting fixed by an `env.txt` or by the program that started the app is shown greyed out.
 
@@ -237,7 +237,7 @@ A line like `DM_PRESENT_SNAP=0` in `Documents/env.txt` (in the Files app, under 
 | Frame-rate counter | `DM_SHOW_FPS` | `1`, `0` |
 | Touch feedback | `DM_TOUCH_HAPTICS` | `1`, `0` |
 | Edit controls at start | `DM_PAD_EDIT` | `1`, `0` |
-| Portrait: game above the controls | `DM_PORTRAIT_LAYOUT` | `1`, `0` |
+| iPhone Duo portrait: game above the controls | `DM_PORTRAIT_LAYOUT` | `1`, `0` |
 | Gyro rotation | `DM_PHONE_ROTATE` | `auto`, or `0` to `3` (quarter turns) |
 | Game rumble | `DM_RUMBLE` | `1`, `0` |
 | Rumble strength | `DM_RUMBLE_GAIN` | `0` to `3` |
