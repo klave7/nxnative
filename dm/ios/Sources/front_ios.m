@@ -12,6 +12,7 @@
 
 UIView *dm_gamepad_view(CGRect frame);
 void dm_gamepad_reset(void);
+void dm_gamepad_active(void);
 BOOL dm_foldable_inner_screen(CGSize px);   // DmGamepad.m: the iPhone Duo's inner screen, by its native size
 void mtl_set_present_split(double top, double split);   // nvn_mtl.m: the portrait layout's split of the canvas, as fractions of its height (picture centred in the top part under `top`, controls' image below `split`); split < 0 = none
 void mtl_set_controls_image(CGImageRef img);   // nvn_mtl.m: the image behind the controls in the portrait layout (controls_background.jpg)
@@ -303,6 +304,6 @@ void front_ios_focus_event(int ev) {
             UIApplication.sharedApplication.idleTimerDisabled = YES;
             if (g_audio_intr) { LOG("audio session: active again with no interruption-ended notice; resuming"); g_audio_intr = 0; g_session_off = 1; }
             if (g_session_off) front_ios_audio_session();
-            front_ios_audio_apply(); dm_focus_set(1); break;
+            front_ios_audio_apply(); dm_gamepad_active(); dm_focus_set(1); break;
     }
 }
