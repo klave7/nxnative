@@ -13,6 +13,7 @@
 UIView *dm_gamepad_view(CGRect frame);
 void dm_gamepad_reset(void);
 void dm_gamepad_active(void);
+void mtl_set_bar_image(CGImageRef img);   // nvn_mtl.m: the still image for the bars (DM_BAR_FILL=image)
 void front_ios_boot(void);
 int front_ios_boot_ok(void);
 const char *front_ios_boot_message(void);   // main.m: why a build that keeps the game files off the IPA found none usable (NULL = the generic hint)
@@ -48,6 +49,7 @@ static UILabel *front_ios_fps_label(void);
 @property (nonatomic, strong) UIView *pad;
 @property (nonatomic, strong) UILabel *fps;
 @property (nonatomic) BOOL launched;
+@property (nonatomic) BOOL fill;   // DM_BAR_FILL=blur or image: the game view is the whole screen, and the present fits the picture in it and fills the bars (nvn_mtl.m)
 - (void)startGame;
 @end
 static DmRootVC *g_root;
@@ -71,6 +73,10 @@ static void launcher_done(void) { [g_root startGame]; }
 - (void)startGame {
     if (self.game) return;
     front_hud_env();   // before the game view makes its device (an env file's DM_METAL_HUD sets it in main.m already)
+    { const char *m = getenv("DM_BAR_FILL"); self.fill = m && (!strcmp(m, "blur") || !strcmp(m, "image"));
+      if (m && !strcmp(m, "image")) {
+          NSString *path = [NSBundle.mainBundle pathForResource:@"bar_background" ofType:@"jpg"]; UIImage *img = path ? [UIImage imageWithContentsOfFile:path] : nil;
+          if (img.CGImage) mtl_set_bar_image(img.CGImage); else LOG("[RED] front end: bar_background.jpg is not in the app, the bars stay black"); } }
     self.game = [[DmGameView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:self.game];
     g_layer = (CAMetalLayer *)self.game.layer;
@@ -88,8 +94,9 @@ static void launcher_done(void) { [g_root startGame]; }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGRect b = self.view.bounds; if (!self.game) return;
-    CGFloat w = b.size.width, h = b.size.height;   // Fit 16:9 into the whole screen
-    if (w / h > 16.0 / 9.0) w = h * 16.0 / 9.0; else h = w * 9.0 / 16.0;
+    CGFloat w = b.size.width, h = b.size.height;   // Fit 16:9 into the whole screen (or, filling the bars, the whole screen: the present letterboxes the picture inside it)
+    if (self.fill) { /* the whole screen */ }
+    else if (w / h > 16.0 / 9.0) w = h * 16.0 / 9.0; else h = w * 9.0 / 16.0;
     self.game.frame = CGRectMake(floor((b.size.width - w) / 2), floor((b.size.height - h) / 2), w, h);
     if (self.fps) {   // the top row's free stretch: right of DmGamepad.m's L3 key (102 + 17 of its units from the safe edge), level with − / + (22 units down); u is its unit
         CGRect s = UIEdgeInsetsInsetRect(b, self.view.safeAreaInsets); CGFloat u = MIN(b.size.height / 430.0, 1.3);
