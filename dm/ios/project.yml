@@ -38,7 +38,8 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationLandscapeRight
           - UIInterfaceOrientationLandscapeLeft
-        UIRequiresFullScreen: true
+          - UIInterfaceOrientationPortrait      # allowed only where DmRootVC says so (front_ios.m: the iPhone Duo's inner screen, for the portrait layout); every other screen stays landscape
+        UIRequiresFullScreen~ipad: true   # iPad only (as before). Without a value for the iPhone family the app is resizable there: the iPhone Duo shows a fixed-size app as a landscape window scaled into its portrait screen, so the portrait layout never got a portrait window
         UIStatusBarHidden: true
         UIViewControllerBasedStatusBarAppearance: false
         LSApplicationCategoryType: ${DM_APP_CATEGORY}   # game profile app_category

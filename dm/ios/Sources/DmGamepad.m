@@ -149,6 +149,9 @@ static const CGFloat K_SIZE_MIN = 0.5, K_SIZE_MAX = 1.6;
 static NSString *const k_layout_key = @"DmPadLayout";   // NSUserDefaults: 0 = 2D, 1 = 3D, 2 = Tap (DM_GAME_PAD_LAYOUT's numbers)
 int dm_opmode(void);   // hle_oe.c: 0 = handheld
 double mtl_present_aspect(void);   // nvn_mtl.m: width / height of the picture the last present showed
+// A known foldable's inner screen by the shape of its native size in pixels (either way round): the iPhone Duo's, 0.7035 wide to tall (2007 x 2853 at scale 3.0 in a landscape window, 1878 x 2670 at
+// scale 2.8 in a portrait one: the size changes, the shape does not; the closed screen's is 0.687, an iPad's 0.69 to 0.75). The gyro rule and the portrait layout are for it
+BOOL dm_foldable_inner_screen(CGSize px) { CGFloat lo = fmin(px.width, px.height), hi = fmax(px.width, px.height); return lo >= 1700 && fabs(lo / hi - 0.7035) < 0.0021; }
 
 @interface DmGamepad : UIView
 @end
@@ -261,10 +264,27 @@ static CATextLayer *label(CALayer *parent, NSString *s) {
 }
 
 // ---- Layout (points; computed inside the safe area) ----
-- (UIEdgeInsets)padInsets { UIEdgeInsets i = self.safeAreaInsets; i.left = i.right = MIN(i.left, i.right); return i; }   // the sides match: the camera's side no longer pushes its controls in, both sides take the smaller inset (none where one side is clear)
-- (CGRect)safe { return UIEdgeInsetsInsetRect(self.bounds, self.padInsets); }
-- (CGRect)corner { UIEdgeInsets i = self.padInsets; i.left *= K_CORNER_IN; i.right *= K_CORNER_IN; return UIEdgeInsetsInsetRect(self.bounds, i); }   // the rectangle the bottom-corner controls use
-- (CGFloat)u { return MIN(self.bounds.size.height / 430.0, 1.3); }   // 1 = 430 points tall (iPhone Pro Max landscape)
+// Portrait (a screen taller than wide, such as the iPhone Duo's inner screen held upright; DM_PORTRAIT_LAYOUT, on by default): the screen is split in half. The picture is centred in the top half (the present
+// does the same, nvn_mtl.m present_viewport, with the bars' fill around it), and the controls take the bottom half, over the image the present shows there. Every control is placed in a rectangle (ctl): the
+// whole screen in landscape, the bottom half in portrait, so the same places work in both
+static BOOL portrait_layout(void) { const char *e = getenv("DM_PORTRAIT_LAYOUT"); return !e || atoi(e); }
+- (BOOL)portrait { CGSize s = self.bounds.size; return s.height > s.width && portrait_layout(); }
+- (CGFloat)pictureTop { return self.safeAreaInsets.top; }   // the picture starts below the camera / status area
+- (CGRect)pictureRect {   // where the picture is shown, in points: as the present fits it to the shape the game draws (portrait: centred in the top half; else centred in the whole screen)
+    CGRect b = self.bounds; double pa = 16.0 / 9.0;
+    { const char *m = getenv("DM_BAR_FILL"); if (m && (!strcmp(m, "blur") || !strcmp(m, "image")) && mtl_present_aspect() > 0) pa = mtl_present_aspect(); }   // the bars filled: the view is the whole screen and the picture is fitted in it as the present did
+    if (self.portrait) {
+        CGFloat top = self.pictureTop, rh = MAX(b.size.height / 2 - top, 1), w = MIN(b.size.width, rh * pa), h = w / pa;
+        return CGRectMake((b.size.width - w) / 2, top + (rh - h) / 2, w, h);
+    }
+    CGFloat w = b.size.width, h = b.size.height; if (w / h > pa) w = h * pa; else h = w / pa;
+    return CGRectMake((b.size.width - w) / 2, (b.size.height - h) / 2, w, h);
+}
+- (CGRect)ctl { CGRect b = self.bounds; return self.portrait ? CGRectMake(0, b.size.height / 2, b.size.width, b.size.height / 2) : b; }
+- (UIEdgeInsets)padInsets { UIEdgeInsets i = self.safeAreaInsets; i.left = i.right = MIN(i.left, i.right); if (self.portrait) i.top = 0; return i; }   // the sides match: the camera's side no longer pushes its controls in, both sides take the smaller inset (none where one side is clear)
+- (CGRect)safe { return UIEdgeInsetsInsetRect(self.ctl, self.padInsets); }
+- (CGRect)corner { UIEdgeInsets i = self.padInsets; i.left *= K_CORNER_IN; i.right *= K_CORNER_IN; return UIEdgeInsetsInsetRect(self.ctl, i); }   // the rectangle the bottom-corner controls use
+- (CGFloat)u { CGRect c = self.ctl; CGFloat u = MIN(c.size.height / 430.0, 1.3); return self.portrait ? MIN(u, c.size.width / 690.0) : u; }   // 1 = 430 points tall (iPhone Pro Max landscape); in portrait also at most the width's worth
 static CGPoint side(CGRect s, int right, CGFloat dx, CGFloat y) { return CGPointMake(right ? CGRectGetMaxX(s) - dx : CGRectGetMinX(s) + dx, y); }
 static CGPoint add(CGPoint a, CGPoint b) { return CGPointMake(a.x + b.x, a.y + b.y); }
 static int elemOf(int b) {   // the control a locked key belongs to
@@ -284,7 +304,7 @@ static int keyElem(int b) { return b <= B_Y ? E_FACE : b >= B_LEFT ? E_DPAD : el
 - (CGPoint)stickHome { CGRect s = self.corner; return add(side(s, 0, K_STICK_X * self.u, CGRectGetMaxY(s) - K_PAD_Y * self.u), [self off:E_STICK]); }   // the left stick's ring centre
 - (CGPoint)stickCentre:(int)i { return i ? _rCentre : self.stickHome; }
 - (CGFloat)stickR:(int)i { return i ? K_RSTICK_R * self.u : K_STICK_R * self.u * [self sc:E_STICK]; }
-- (BOOL)inRightArea:(CGPoint)p { CGRect b = self.bounds; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE; }
+- (BOOL)inRightArea:(CGPoint)p { CGRect b = self.bounds; return p.x >= CGRectGetMaxX(b) - b.size.width * K_RSWIPE && (!self.portrait || p.y >= CGRectGetMinY(self.ctl)); }   // portrait: only below the picture, so a touch on the picture stays the game's
 - (CGPoint)dpadCenter { CGRect s = self.corner; CGFloat u = self.u; return add(side(s, 0, K_LOW_X * u, CGRectGetMaxY(s) - K_LOW_Y * u), [self off:E_DPAD]); }
 - (CGFloat)dpadR { return K_DPAD_R * self.u * [self sc:E_DPAD]; }
 static BOOL isDrop(int b) { return b == B_ZL || b == B_L || b == B_ZR || b == B_R; }
@@ -367,11 +387,8 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
 // Touches no control takes (all of them while a physical controller is connected) go to the game's touch screen, normalized on the 16:9 picture that front_ios.m
 // centres in the screen: Super Mario Galaxy's pointer in handheld mode (profile op_mode). The host reports them only in handheld mode, as on the Switch (hle_hid.c touch_read)
 - (void)pushGame {
-    CGRect b = self.bounds; CGFloat w = b.size.width, h = b.size.height;
+    CGRect pr = self.pictureRect; CGFloat w = pr.size.width, h = pr.size.height, x0 = pr.origin.x, y0 = pr.origin.y;
     if (w <= 0 || h <= 0) return;
-    double pa = 16.0 / 9.0; { const char *m = getenv("DM_BAR_FILL"); if (m && (!strcmp(m, "blur") || !strcmp(m, "image")) && mtl_present_aspect() > 0) pa = mtl_present_aspect(); }   // the bars filled: the view is the whole screen and the picture is fitted in it as the present did
-    if (w / h > pa) w = h * pa; else h = w / pa;
-    CGFloat x0 = (b.size.width - w) / 2, y0 = (b.size.height - h) / 2;
     dm_touch t[16]; int n = 0;
     for (int i = 0; i < 16; i++) if (_game[i]) {
         CGPoint p = [_game[i] locationInView:self];
@@ -632,12 +649,11 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
             lastB = self.bounds; lastN = nb.size; lastO = o;
             LOG("front end: screen %.0fx%.0f points, native %.0fx%.0f px, scale %.1f, interface orientation %d", self.bounds.size.width, self.bounds.size.height, nb.size.width, nb.size.height, sc.nativeScale, o);
         }
-        // The automatic gyro rotation: a known foldable's inner screen (native size, either way round) needs one quarter turn more than the interface orientation gives while its window is
-        // landscape, and none in portrait (found on the iPhone Duo: 2007 x 2853 px, the gyro right with one more quarter turn in landscape, orientations 3 and 4, and as the orientation says
-        // in portrait; the closed screen, 1398 x 2034 px, follows the orientation like any phone). The window's shape decides, not the orientation the screen reports, which can lag a rotation;
-        // it is worked out on every layout, so no change is missed
-        CGFloat nlo = fmin(nb.size.width, nb.size.height), nhi = fmax(nb.size.width, nb.size.height);
-        int q = (nlo == 2007 && nhi == 2853 && self.bounds.size.width > self.bounds.size.height) ? 1 : 0;
+        // The automatic gyro rotation: a known foldable's inner screen needs one quarter turn more than the interface orientation gives, in every orientation. Its sensors sit a quarter turn against the
+        // screen, a fixed offset (found on the iPhone Duo: the gyro was right with the extra turn in landscape, orientations 3 and 4, and in true portrait, orientation 1; the closed screen follows the
+        // orientation like any phone). An earlier test that seemed to say "no turn in portrait" was a landscape-only app letterboxed in a portrait screen, which reports orientation 3 there: with the portrait
+        // layout off that case still wants 0 degrees by hand. Worked out on every layout, so no change is missed
+        int q = dm_foldable_inner_screen(nb.size) ? 1 : 0;
         if (q != atomic_exchange(&g_auto_quarter, q)) LOG("front end: automatic gyro rotation is now %d quarter turn(s)", q);
     }
     CGFloat u = self.u;
