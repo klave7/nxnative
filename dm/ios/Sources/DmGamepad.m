@@ -639,8 +639,10 @@ static void placeLabel(CATextLayer *t, CGPoint c, CGFloat fs) {
         // screen, a fixed offset (found on the iPhone Duo: the gyro was right with the extra turn in landscape, orientations 3 and 4, and in true portrait, orientation 1; the closed screen follows the
         // orientation like any phone). An earlier test that seemed to say "no turn in portrait" was a landscape-only app letterboxed in a portrait screen, which reports orientation 3 there: with the portrait
         // layout off that case still wants 0 degrees by hand. Worked out on every layout, so no change is missed
-        int q = dm_foldable_inner_screen(nb.size) ? 1 : 0;
-        if (q) [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"dm.foldable_inner_seen"];   // the settings screen shows the iPhone Duo's settings on a Duo with its closed screen too (DeviceKind.foldable)
+        // On iOS 27 and later Core Motion already delivers the samples in the picture's frame (deviceMotionBody, phone_motion_start), which is right on that screen in every orientation, so no turn
+        // is added there; the turn is for iOS 26, where the samples come in the hardware frame
+        BOOL inner = dm_foldable_inner_screen(nb.size); int q = inner && !g_motion_body ? 1 : 0;
+        if (inner) [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"dm.foldable_inner_seen"];   // the settings screen shows the iPhone Duo's settings on a Duo with its closed screen too (DeviceKind.foldable)
         if (q != atomic_exchange(&g_auto_quarter, q)) LOG("front end: automatic gyro rotation is now %d quarter turn(s)", q);
     }
     CGFloat u = self.u;

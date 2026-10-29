@@ -86,7 +86,7 @@ Positions are measured from the built-in layout, so a layout you make fits other
 
 ### Gyro rotation
 
-Turns the phone's motion controls (the gyro that drives pointer and aiming games when no controller supplies motion). **Automatic**, the default, adds the quarter turn the iPhone Duo's inner screen needs, in landscape and in portrait; every other phone, and the Duo's closed screen, follow the screen's orientation as before. With **iPhone Duo portrait: game above the controls** turned off, iOS shows the app as a landscape window inside the upright screen and reports it as landscape, so choose **0°** by hand there. If the pointer or aiming still comes out turned (up and down acting as left and right), choose **0°**, **90°**, **180°** or **270°** by hand.
+Turns the phone's motion controls (the gyro that drives pointer and aiming games when no controller supplies motion). **Automatic**, the default, is right for every screen on iOS 27 and later, where Core Motion delivers the motion in the picture's frame (the iPhone Duo's inner screen included), so it adds nothing there. On iOS 26 it adds the quarter turn the iPhone Duo's inner screen needs, in landscape and in portrait; every other phone, and the Duo's closed screen, follow the screen's orientation. If the pointer or aiming comes out turned (up and down acting as left and right), choose **0°**, **90°**, **180°** or **270°** by hand.
 
 ### Game rumble
 
