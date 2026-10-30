@@ -136,7 +136,7 @@ static const CGFloat K_SIZE_MIN = 0.5, K_SIZE_MAX = 1.6;
 static NSString *const k_layout_key = @"DmPadLayout";   // NSUserDefaults: 0 = 2D, 1 = 3D, 2 = Tap (DM_GAME_PAD_LAYOUT's numbers)
 int dm_opmode(void);   // hle_oe.c: 0 = handheld
 
-@interface DmGamepad : UIView
+@interface DmGamepad : UIView <UIGestureRecognizerDelegate>
 @end
 static __weak DmGamepad *g_view;
 static void pads_start(void);   // Physical controllers, below
@@ -211,7 +211,7 @@ static CATextLayer *label(CALayer *parent, NSString *s) {
         [self loadCustom];
         [self loadShown];
         [self applyLayout];
-        UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(holdSwap:)]; hold.minimumPressDuration = 0.7;
+        UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(holdSwap:)]; hold.minimumPressDuration = 0.7; hold.delegate = self;
         [self addGestureRecognizer:hold];   // press and hold the layout button: the editor (it cancels the touch, so the release does not change the layout)
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
         [nc addObserver:self selector:@selector(padsChanged:) name:GCControllerDidConnectNotification object:nil];
@@ -445,6 +445,9 @@ static CGFloat dist(CGPoint a, CGPoint b) { return hypot(a.x - b.x, a.y - b.y); 
     for (int e = 0; e < E_N; e++) { CGFloat d = dist(p, [self centreOf:e]) / [self reachOf:e]; if (d < bd) { bd = d; best = e; } }
     return best;
 }
+// The hold recognizer sees every touch on the pad, and a recognized long press cancels the touches it is in (cancelsTouchesInView): without this it would release any control held for 0.7 s
+// (holding a button to skip a cutscene stopped after a moment). It may begin only on the layout button, whose touch the editor takes over.
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g { return !_edit && [self inSwap:[g locationInView:self]]; }
 - (void)holdSwap:(UILongPressGestureRecognizer *)g {
     if (g.state == UIGestureRecognizerStateBegan && !_edit && [self inSwap:[g locationInView:self]]) [self enterEdit];
 }
